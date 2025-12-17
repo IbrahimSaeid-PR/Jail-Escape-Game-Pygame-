@@ -8,7 +8,7 @@ pygame.init()
 # Window
 WIDTH, HEIGHT = 800, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Jail Escape - Grow on Apple")
+pygame.display.set_caption("Space Escape Game")
 
 clock = pygame.time.Clock()
 font = pygame.font.SysFont(None, 32)
@@ -25,10 +25,6 @@ angle = 0
 scale = 1.0
 head_glow_time = 0  # duration of glow effect
 
-# Exit
-exit_size = 60
-exit_x, exit_y = WIDTH - 100, HEIGHT // 2
-
 # Guards and keys
 num_guards = 2
 num_keys = 3
@@ -38,11 +34,21 @@ keys = []
 # Game state
 score = 0
 game_over = False
+level_time_left = 10.0  # seconds per level
+
+# Starfield for space background
+stars = [(random.randint(0, WIDTH), random.randint(0, HEIGHT), random.randint(100, 255)) for _ in range(200)]
+
+def draw_starfield(surface):
+    
+    for sx, sy, brightness in stars:
+        pygame.draw.circle(surface, (brightness, brightness, brightness), (sx, sy), 1)
+
+def all_keys_collected():
+    return all(k["collected"] for k in keys) 
 
 def generate_level():
-    global guards, keys, exit_x, exit_y
-    exit_x = random.randint(WIDTH // 2, WIDTH - 100)
-    exit_y = random.randint(50, HEIGHT - exit_size - 50)
+    global guards, keys, level_time_left
     guards = [{"x": random.randint(150, WIDTH-150), 
                "y": random.randint(50, HEIGHT-50), 
                "dir": random.choice([-2, 2])} for _ in range(num_guards)]
@@ -53,6 +59,7 @@ def generate_level():
             "y": random.randint(50, HEIGHT-50),
             "collected": False
         })
+    level_time_left = 10.0
 
 def reset_player():
     global x, y, player_color, head_color, angle, scale, head_glow_time
@@ -64,25 +71,32 @@ def reset_player():
     head_glow_time = 0
 
 def draw_composite_player(surface, cx, cy, angle, scale, body_color, head_color):
-    # Body
-    body_rect = pygame.Rect(-body_size/2, -body_size/2, body_size, body_size)
-    body_rect_scaled = pygame.Rect(body_rect.x*scale, body_rect.y*scale, body_rect.width*scale, body_rect.height*scale)
-    
-    # Head
-    head_rect = pygame.Rect(-head_size/2, -body_size/2 - head_size, head_size, head_size)
-    head_rect_scaled = pygame.Rect(head_rect.x*scale, head_rect.y*scale, head_rect.width*scale, head_rect.height*scale)
-    
-    # Surface for rotation
-    surf_width = int(max(body_size, head_size)*scale*2)
-    surf_height = int((body_size + head_size)*scale*2)
-    surf = pygame.Surface((surf_width, surf_height), pygame.SRCALPHA)
-    
-    # Draw body
-    pygame.draw.rect(surf, body_color, (surf_width/2 - body_rect_scaled.width/2, surf_height/2 - body_rect_scaled.height/2, body_rect_scaled.width, body_rect_scaled.height))
-    # Draw head
-    pygame.draw.rect(surf, head_color, (surf_width/2 - head_rect_scaled.width/2, surf_height/2 - body_rect_scaled.height/2 - head_rect_scaled.height, head_rect_scaled.width, head_rect_scaled.height))
-    
-    # Rotate surface
+    # Simple spaceship: triangle body + small fins + engine glow
+    ship_len = body_size * 1.0 * scale
+    ship_w = body_size * 0.8 * scale
+
+    surf_w = int(ship_len * 1.4)
+    surf_h = int(ship_w * 1.6)
+    surf = pygame.Surface((surf_w, surf_h), pygame.SRCALPHA)
+    cx_local, cy_local = surf_w // 2, surf_h // 2
+
+    nose = (cx_local + ship_len * 0.5, cy_local)
+    tail_top = (cx_local - ship_len * 0.5, cy_local - ship_w * 0.35)
+    tail_bottom = (cx_local - ship_len * 0.5, cy_local + ship_w * 0.35)
+
+    # Main body (triangle)
+    pygame.draw.polygon(surf, body_color, [nose, tail_top, tail_bottom])
+
+    # Side fins
+    fin_offset = ship_len * 0.05
+    fin_span = ship_w * 0.6
+    pygame.draw.line(surf, (180, 180, 220), (cx_local - fin_offset, cy_local - fin_span / 2), (cx_local - ship_len * 0.2, cy_local - ship_w * 0.15), 3)
+    pygame.draw.line(surf, (180, 180, 220), (cx_local - fin_offset, cy_local + fin_span / 2), (cx_local - ship_len * 0.2, cy_local + ship_w * 0.15), 3)
+
+    # Engine glow at tail
+    glow_radius = int(body_size * 0.22 * scale)
+    pygame.draw.circle(surf, head_color, (int(cx_local - ship_len * 0.5), cy_local), glow_radius)
+
     rotated_surf = pygame.transform.rotate(surf, math.degrees(angle))
     rect = rotated_surf.get_rect(center=(cx, cy))
     surface.blit(rotated_surf, rect.topleft)
@@ -97,26 +111,80 @@ def guard_rect(g):
 def key_rect(k):
     return pygame.Rect(k["x"], k["y"], 30, 30)
 
+def draw_space_part(surface, k):
+    size = 30
+    x0, y0 = k["x"], k["y"]
+    cx, cy = x0 + size // 2, y0 + size // 2
+    part_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+
+    # Base plate with beveled corners
+    plate = [(5, 0), (size-6, 0), (size-1, 5), (size-1, size-6), (size-6, size-1), (5, size-1), (0, size-6), (0, 5)]
+    pygame.draw.polygon(part_surf, (230, 210, 40), plate)
+    pygame.draw.polygon(part_surf, (140, 120, 10), plate, width=2)
+
+    # Central bolt
+    pygame.draw.circle(part_surf, (255, 255, 180), (size//2, size//2), 6)
+    pygame.draw.circle(part_surf, (120, 110, 60), (size//2, size//2), 6, width=2)
+
+    # Diagonal struts
+    pygame.draw.line(part_surf, (255, 240, 120), (6, size-8), (size-8, 6), 3)
+    pygame.draw.line(part_surf, (255, 240, 120), (6, 6), (size-8, size-8), 3)
+
+    surface.blit(part_surf, (x0, y0))
+
+def draw_asteroid(surface, g):
+    size = int(body_size * 1.5)
+    x0, y0 = g["x"], g["y"]
+    rock_surf = pygame.Surface((size, size), pygame.SRCALPHA)
+    
+    # Jagged asteroid shape
+    points = [
+        (size * 0.2, size * 0.1),
+        (size * 0.5, size * 0.05),
+        (size * 0.8, size * 0.15),
+        (size * 0.9, size * 0.45),
+        (size * 0.85, size * 0.8),
+        (size * 0.5, size * 0.95),
+        (size * 0.15, size * 0.85),
+        (size * 0.05, size * 0.5),
+    ]
+    
+    # Dark rocky color
+    pygame.draw.polygon(rock_surf, (80, 70, 65), points)
+    pygame.draw.polygon(rock_surf, (50, 40, 35), points, width=3)
+    
+    # Crater-like shadows
+    pygame.draw.circle(rock_surf, (60, 50, 45), (int(size * 0.3), int(size * 0.3)), 4)
+    pygame.draw.circle(rock_surf, (60, 50, 45), (int(size * 0.7), int(size * 0.6)), 5)
+    pygame.draw.circle(rock_surf, (60, 50, 45), (int(size * 0.4), int(size * 0.75)), 3)
+    
+    surface.blit(rock_surf, (x0, y0))
+
 # First level
 generate_level()
 
 running = True
 while running:
-    clock.tick(60)
-    screen.fill((100, 100, 120))
+    dt = clock.tick(60) / 1000.0
+    screen.fill((5, 5, 20))  # Deep space dark background
+    draw_starfield(screen)  # Draw stars
     
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
 
     keys_pressed = pygame.key.get_pressed()
+    mouse_buttons = pygame.mouse.get_pressed()
 
     if not game_over:
-        # Movement
+        # Movement (arrows/WASD or hold left mouse to steer)
         if keys_pressed[pygame.K_LEFT]: x -= speed
         if keys_pressed[pygame.K_RIGHT]: x += speed
         if keys_pressed[pygame.K_UP]: y -= speed
         if keys_pressed[pygame.K_DOWN]: y += speed
+
+        if mouse_buttons[0]:
+            x, y = pygame.mouse.get_pos() # allow player to use mouse
 
         # Scaling
         if keys_pressed[pygame.K_w]: scale += 0.01
@@ -157,31 +225,35 @@ while running:
         else:
             head_color = (0, 0, 0)  # back to black
 
-        # Reaching exit
-        exit_rect = pygame.Rect(exit_x, exit_y, exit_size, exit_size)
-        if player_rect().colliderect(exit_rect):
+        # Level timer countdown
+        level_time_left = max(0.0, level_time_left - dt)
+        if level_time_left <= 0.0:
+            game_over = True
+
+        # Advance when all keys are collected (no exit square)
+        if all_keys_collected():
             score += 100
             reset_player()
             generate_level()
 
-    # Draw exit
-    pygame.draw.rect(screen, (0, 255, 0), (exit_x, exit_y, exit_size, exit_size))
 
     # Draw keys
     for k in keys:
         if not k["collected"]:
-            pygame.draw.rect(screen, (255, 255, 0), (k["x"], k["y"], 30, 30))
+            draw_space_part(screen, k)
 
-    # Draw guards
+    # Draw guards as asteroids
     for g in guards:
-        pygame.draw.rect(screen, (255, 0, 0), (g["x"], g["y"], body_size, body_size))
+        draw_asteroid(screen, g)
 
     # Draw composite player
     draw_composite_player(screen, x, y, angle, scale, player_color, head_color)
 
     # HUD
     hud = font.render(f"Score: {score}", True, (255, 255, 255))
+    timer = font.render(f"Time: {int(math.ceil(level_time_left))}", True, (255, 255, 255))
     screen.blit(hud, (10, 10))
+    screen.blit(timer, (10, 40))
 
     # Game Over
     if game_over:
